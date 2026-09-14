@@ -3,13 +3,13 @@ import { json } from "co-body";
 import fs from "fs";
 
 function getUsers() {
-  if (!fs.existsSync("users.json")) return [];
-  const data = fs.readFileSync("users.json", "utf-8");
+  if (!fs.existsSync("data.json")) return [];
+  const data = fs.readFileSync("data.json", "utf-8");
   return JSON.parse(data);
   // if not return, pie exists but you do not give it to the people
 }
 function saveUsers(user) {
-  fs.writeFileSync("users.json", JSON.stringify(user));
+  fs.writeFileSync("data.json", JSON.stringify(user));
 }
 
 const server = http.createServer(async (req, res) => {

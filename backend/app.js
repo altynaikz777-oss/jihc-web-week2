@@ -1,66 +1,118 @@
 import http from "http";
 import { json } from "co-body";
-import fs from "fs";
+import { Pool } from "pg";
 
-function getUsers() {
-  if (!fs.existsSync("data.json")) return [];
-  const data = fs.readFileSync("data.json", "utf-8");
-  return JSON.parse(data);
-  // if not return, pie exists but you do not give it to the people
+const pool = new Pool({
+  host: "localhost",
+  user: "altynaj",
+  database: "myapp",
+});
+
+function send(res, status, data) {
+  res.writeHead(status, { "content-type": "application/json" });
+  res.end(JSON.stringify(data));
 }
-function saveUsers(user) {
-  fs.writeFileSync("data.json", JSON.stringify(user));
+
+async function getUsers() {
+  const result = await pool.query(
+    "SELECT id, username, email, password FROM users",
+  );
+  return result.rows;
 }
 
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS",
+  );
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
     return;
-    // surak koigan adamga otvet berip kaitaryp jiberu
   }
 
-  if (req.url === "/users" && req.method === "GET") {
-    const users = getUsers();
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(users));
-    return;
-  }
-
-  if (req.url === "/register" && req.method === "POST") {
-    const body = await json(req);
-    const users = getUsers();
-
-    const alreadyExists = users.find((u) => u.email === body.email);
-    if (alreadyExists) {
-      res.writeHead(400, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "Email already exists" }));
-      return;
-      // alreadyexists userlerdy kaitadan kosa beredi return bolmasa
+  try {
+    if (req.url === "/users" && req.method === "GET") {
+      const users = await getUsers();
+      return send(res, 200, users);
     }
-    users.push(body);
-    saveUsers(users);
-    res.writeHead(201, { "content-type": "application/json" });
-    res.end(JSON.stringify({ message: "Account created successfully!!!" }));
-  } else if (req.url === "/login" && req.method === "POST") {
-    const users = getUsers();
-    const body = await json(req);
-    const found = users.find(
-      (u) => u.password === body.password && u.email === body.email,
-    );
-    if (found) {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ message: `Welcome ${found.username}!` }));
-    } else {
-      res.writeHead(401, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "Incorrect password or email" }));
+
+    if (req.url === "/register" && req.method === "POST") {
+      const body = await json(req);
+
+      const { rows } = await pool.query(
+        "SELECT id FROM users WHERE email = $1",
+        [body.email],
+      );
+      if (rows.length > 0) {
+        return send(res, 400, { error: "Email already exists" });
+      }
+      await pool.query(
+        "INSERT INTO users (username, email, password) VALUES ($1, $2, $3)",
+        [body.username, body.email, body.password],
+      );
+      return send(res, 201, { message: "Account created successfully!!!" });
     }
-  } else {
+
+    if (req.url === "/login" && req.method === "POST") {
+      const body = await json(req);
+      const { rows } = await pool.query(
+        " SELECT id, username FROM users WHERE email = $1 AND password = $2",
+        [body.email || null, body.password || null],
+      );
+
+      if (rows.length > 0) {
+        return send(res, 200, { message: `Welcome ${rows[0].username}!` });
+      } else {
+        return send(res, 401, { error: "Incorrect email or password" });
+      }
+    }
+
+    const parts = req.url.split("/");
+    const id = Number(parts[2]);
+    const hasId =
+      parts[1] === "users" &&
+      parts.length === 3 &&
+      Number.isInteger(id) &&
+      id > 0;
+
+    if (hasId && req.method === "PUT") {
+      const body = await json(req);
+
+      const { rows } = await pool.query(
+        `UPDATE users
+         SET username = $1
+         WHERE id = $2
+         RETURNING id, username`,
+        [body.username || null, id],
+      );
+
+      if (rows.length === 0) {
+        return send(res, 404, { error: "User not found" });
+      }
+      return send(res, 200, { message: "User updated", user: rows[0] });
+    }
+
+    if (hasId && req.method === "DELETE") {
+      const { rowCount } = await pool.query("DELETE FROM users WHERE id = $1", [
+        id,
+      ]);
+
+      if (rowCount === 0) {
+        return send(res, 404, { error: "User not found" });
+      }
+      return send(res, 200, { message: "User deleted" });
+    }
+
     res.writeHead(404);
     res.end("Not Found");
+  } catch (err) {
+    console.error(err);
+    send(res, 500, { error: "Something went wrong" });
   }
 });
+
 server.listen(3000, () => console.log("listening to 3000..."));
